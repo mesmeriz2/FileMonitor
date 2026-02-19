@@ -1,0 +1,23 @@
+# 파일 모니터링 애플리케이션 의존성 패키지
+
+# GUI 프레임워크
+customtkinter==5.2.2
+tkinterdnd2==0.4.3
+
+# 파일 모니터링
+watchdog==6.0.0
+
+# 시스템 트레이
+pystray==0.19.5
+
+# 이미지 처리
+pillow==12.0.0
+
+# HWP 파일 처리
+pyhwpx==1.6.6
+
+# Windows COM (한컴오피스 연동)
+pywin32==311
+
+# PyInstaller
+pyinstaller==6.18.0
