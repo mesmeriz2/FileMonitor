@@ -413,15 +413,21 @@ class PDFConverterQueue:
         self.lock = threading.Lock()  # 동시 접근 방지
         self.com_initialized = False
         self.hwp_available = False
+        # 진행 상황 카운터
+        self._progress_lock = threading.Lock()
+        self.total_tasks = 0
+        self.completed_tasks = 0
     
     def add_task(self, filepath: str, output_dir: Optional[str], filename: str) -> None:
         """PDF 변환 작업을 큐에 추가
-        
+
         Args:
             filepath: 변환할 파일 경로
             output_dir: PDF 출력 디렉토리 (None이면 원본 폴더)
             filename: 파일명 (로깅용)
         """
+        with self._progress_lock:
+            self.total_tasks += 1
         self.queue.put((filepath, output_dir, filename))
         self._start_processing()
     
@@ -458,7 +464,7 @@ class PDFConverterQueue:
     
     def _check_hwp_available(self) -> bool:
         """한컴오피스 사용 가능 여부 확인
-        
+
         Returns:
             한컴오피스 사용 가능 여부
         """
@@ -466,16 +472,32 @@ class PDFConverterQueue:
             import win32com.client
             if not self.com_initialized:
                 return False
-            
+
             try:
                 test_hwp = win32com.client.Dispatch("HWPFrame.HwpObject")
                 test_hwp.Quit()
                 time.sleep(FILE_ACCESS_WAIT)
-                return True
             except Exception as e:
                 if self.log_callback:
                     self.log_callback(f"한컴오피스 확인 실패: {str(e)}", "warning")
                 return False
+
+            # "Hancom PDF" 프린터 존재 여부 확인
+            try:
+                import win32print
+                printer_flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+                printers = [p[2] for p in win32print.EnumPrinters(printer_flags)]
+                if "Hancom PDF" not in printers:
+                    if self.log_callback:
+                        self.log_callback(
+                            "'Hancom PDF' 프린터를 찾을 수 없습니다. "
+                            "한컴오피스 PDF 드라이버 설치를 확인하세요.", "warning"
+                        )
+                    return False
+            except ImportError:
+                pass  # win32print 없으면 프린터 검사 건너뜀
+
+            return True
         except ImportError:
             return False
     
@@ -485,8 +507,9 @@ class PDFConverterQueue:
             try:
                 import pythoncom
                 pythoncom.CoUninitialize()
-            except:
-                pass
+            except Exception as e:
+                if self.log_callback:
+                    self.log_callback(f"COM 정리 중 오류 (무시됨): {str(e)}", "warning")
     
     def _process_queue(self):
         """큐의 작업을 순차적으로 처리"""
@@ -511,15 +534,17 @@ class PDFConverterQueue:
                             self.log_callback(f"PDF 변환 실패 ({filename}): 한컴오피스가 설치되지 않았거나 COM 접근이 불가능합니다", "error")
                         if self.stats_callback:
                             self.stats_callback("failed")
+                        with self._progress_lock:
+                            self.completed_tasks += 1
                         self.queue.task_done()
                         continue
-                    
+
                     # PDF 변환 실행 (순차 처리 보장)
                     success, result = PDFConverter.convert_hwp_to_pdf(filepath, output_dir, skip_check=True)
-                    
+
                     # 변환 후 추가 대기 (한컴오피스 완전 종료 보장)
                     time.sleep(PDF_CONVERSION_WAIT)
-                    
+
                     if success:
                         if self.log_callback:
                             output_location = output_dir if output_dir else "원본 폴더"
@@ -533,8 +558,10 @@ class PDFConverterQueue:
                         # 통계 업데이트
                         if self.stats_callback:
                             self.stats_callback("failed")
-                    
+
                     # 작업 완료 표시
+                    with self._progress_lock:
+                        self.completed_tasks += 1
                     self.queue.task_done()
                     
                 except queue.Empty:
@@ -550,9 +577,11 @@ class PDFConverterQueue:
                         self.log_callback(f"PDF 변환 큐 처리 오류: {str(e)}", "error")
                     if self.stats_callback:
                         self.stats_callback("failed")
+                    with self._progress_lock:
+                        self.completed_tasks += 1
                     try:
                         self.queue.task_done()
-                    except:
+                    except Exception:
                         pass
         finally:
             # 스레드 종료 시 COM 정리
@@ -619,21 +648,27 @@ class PDFConverter:
             if not hwp:
                 return False, "한컴오피스 인스턴스를 생성할 수 없습니다"
             
-            hwp.Open(filepath)
-            
-            # PDF 변환 액션 생성
-            action = hwp.CreateAction("Print")
-            pset = action.CreateSet()
-            action.GetDefault(pset)
-            
-            # PDF 프린터 설정
-            pset.SetItem("PrintMethod", 0)
-            pset.SetItem("PrinterName", "Hancom PDF")
-            pset.SetItem("FileName", output_path)
-            pset.SetItem("SaveToFile", True)
-            
-            # 변환 실행
-            action.Execute(pset)
+            try:
+                hwp.Open(filepath)
+            except Exception as e:
+                return False, f"파일 열기 실패: {str(e)}"
+
+            # PDF 변환 액션 생성 및 실행
+            try:
+                action = hwp.CreateAction("Print")
+                pset = action.CreateSet()
+                action.GetDefault(pset)
+
+                # PDF 프린터 설정
+                pset.SetItem("PrintMethod", 0)
+                pset.SetItem("PrinterName", "Hancom PDF")
+                pset.SetItem("FileName", output_path)
+                pset.SetItem("SaveToFile", True)
+
+                # 변환 실행
+                action.Execute(pset)
+            except Exception as e:
+                return False, f"PDF 프린터 설정/실행 오류: {str(e)}"
             
             # 결과 파일 존재 확인 (재시도 로직)
             retry_count = 0
@@ -685,6 +720,7 @@ class FileMonitorHandler(FileSystemEventHandler):
         self.extensions = [ext.lower() for ext in extensions]
         self.processing_files = set()  # 중복 처리 방지
         self.processed_files = set()  # 처리 완료된 파일 (재감지 방지)
+        self._processed_lock = threading.Lock()  # processed_files 스레드 안전 접근용
     
     def _should_process_file(self, filepath: str) -> bool:
         """파일을 처리해야 하는지 확인"""
@@ -715,9 +751,10 @@ class FileMonitorHandler(FileSystemEventHandler):
             return False
         
         # 이미 처리 완료된 파일은 무시 (재감지 방지)
-        if filepath in self.processed_files:
-            return False
-        
+        with self._processed_lock:
+            if filepath in self.processed_files:
+                return False
+
         return True
     
     def _wait_for_file_ready(self, filepath: str, max_wait_seconds: float = FILE_READY_TIMEOUT) -> bool:
@@ -781,9 +818,13 @@ class FileMonitorHandler(FileSystemEventHandler):
                     # 콜백 실행
                     self.callback(filepath, ext)
                     # 처리 완료된 파일로 표시 (재감지 방지)
-                    self.processed_files.add(filepath)
+                    with self._processed_lock:
+                        self.processed_files.add(filepath)
                     # 일정 시간 후 처리 완료 목록에서 제거 (파일명 변경 후 재감지 방지 시간)
-                    threading.Timer(PROCESSED_FILE_TIMEOUT, lambda: self.processed_files.discard(filepath)).start()
+                    def _remove_processed(fp=filepath):
+                        with self._processed_lock:
+                            self.processed_files.discard(fp)
+                    threading.Timer(PROCESSED_FILE_TIMEOUT, _remove_processed).start()
                 finally:
                     # 처리 중 목록에서 제거
                     self.processing_files.discard(filepath)
@@ -856,17 +897,24 @@ class FileMonitor:
                 callback=self.process_file,
                 extensions=self.config.get("extensions", [])
             )
-            
+
             self.observer = Observer()
             self.observer.schedule(self.event_handler, folder_path, recursive=False)
             self.observer.start()
             self.is_monitoring = True
-            
+
             if self.log_callback:
                 self.log_callback(f"모니터링 시작: {folder_path}", "info")
-            
+
             return True
         except Exception as e:
+            # observer 시작 실패 시 정리
+            if self.observer is not None:
+                try:
+                    self.observer.stop()
+                except Exception:
+                    pass
+                self.observer = None
             if self.log_callback:
                 self.log_callback(f"모니터링 시작 실패: {str(e)}", "error")
             return False
@@ -1676,14 +1724,19 @@ class MonitorApp(DnDCTk):
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     f.write(f"[{timestamp}] [{level.upper()}] {message}\n")
             except Exception as e:
-                print(f"로그 파일 저장 오류: {e}")
+                # 무한 재귀 방지를 위해 save_logs 경로를 거치지 않고 큐에 직접 push
+                self.log_queue.put(f"로그 파일 저장 오류: {e}", "warning")
     
     def update_logs(self):
         """로그 업데이트 (주기적 호출)"""
         logs = self.log_queue.get_all()
         for message, level, timestamp in logs:
-            timestamp_str = timestamp.strftime("%H:%M:%S")
-            
+            # 당일 로그는 시간만, 자정을 넘긴 로그는 날짜도 표시
+            if timestamp.date() != datetime.now().date():
+                timestamp_str = timestamp.strftime("%m/%d %H:%M:%S")
+            else:
+                timestamp_str = timestamp.strftime("%H:%M:%S")
+
             # 타임스탬프와 메시지만 표시
             prefix = f"[{timestamp_str}] "
             full_message = f"{prefix}{message}\n"
@@ -1696,7 +1749,17 @@ class MonitorApp(DnDCTk):
         if self.monitor:
             self.success_label.configure(text=f"✅ 성공: {self.monitor.stats['success']}")
             self.failed_label.configure(text=f"❌ 실패: {self.monitor.stats['failed']}")
-        
+
+            # PDF 버튼 텍스트: 큐 처리 중이면 진행 상황(N/M) 표시
+            pdf_queue = self.monitor.pdf_queue
+            with pdf_queue._progress_lock:
+                total = pdf_queue.total_tasks
+                done = pdf_queue.completed_tasks
+            if pdf_queue.is_processing and total > 0:
+                self.pdf_button.configure(text=f"PDF 변환 ({done}/{total})")
+            else:
+                self.pdf_button.configure(text="PDF 변환")
+
         # 다음 업데이트 예약
         self.after(100, self.update_logs)
     
@@ -1890,7 +1953,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ).pack(anchor="w", padx=10, pady=(10, 5))
         
         self.extension_vars = {}
-        extensions_list = [".hwp", ".hwpx", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf"]
+        extensions_list = sorted(ALLOWED_EXTENSIONS)
         current_extensions = config_manager.get("extensions", [])
         
         for ext in extensions_list:
