@@ -13,19 +13,23 @@ import tkinter.filedialog as filedialog
 
 import customtkinter as ctk
 
-print("\n" + "="*70)
-print("tkinterdnd2 라이브러리 로드 시도...")
-print("="*70)
+# 모듈 레벨 로거 설정 (debug_mode는 설정 파일 로드 후 업데이트 가능)
+logger = logging.getLogger('FileMonitor')
+if not logger.handlers:
+    _log_handler = logging.StreamHandler()
+    _log_handler.setFormatter(logging.Formatter('%(levelname)s [FileMonitor]: %(message)s'))
+    logger.addHandler(_log_handler)
+logger.setLevel(logging.WARNING)  # 기본값: WARNING 이상만 출력 (debug_mode=True시 DEBUG로 변경)
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
     TKDND_AVAILABLE = True
-    print("OK tkinterdnd2 import 성공!")
-    
+    logger.debug("tkinterdnd2 import 성공")
+
     # tkinterdnd2 경로를 환경 변수에 추가 (PyInstaller 호환)
     try:
         import tkinterdnd2
-        
+
         # PyInstaller 환경 확인
         if getattr(sys, 'frozen', False):
             # PyInstaller 환경: _MEIPASS 경로 사용
@@ -33,48 +37,30 @@ try:
         else:
             # 개발 환경: 설치된 패키지 경로 사용
             tkdnd_lib_path = os.path.dirname(tkinterdnd2.__file__)
-        
+
         if tkdnd_lib_path not in os.environ.get('PATH', ''):
             os.environ['PATH'] = tkdnd_lib_path + os.pathsep + os.environ.get('PATH', '')
-        print(f"OK tkinterdnd2 라이브러리 경로: {tkdnd_lib_path}")
-        print(f"  - DND_FILES: {DND_FILES}")
-        print(f"  - TkinterDnD: {TkinterDnD}")
+        logger.debug("tkinterdnd2 라이브러리 경로: %s", tkdnd_lib_path)
     except Exception as e:
-        print(f"WARN tkinterdnd2 경로 설정 오류: {e}")
-        
+        logger.warning("tkinterdnd2 경로 설정 오류: %s", e)
+
 except Exception as e:
-    print("ERROR tkinterdnd2 import 실패!")
-    print(f"ERROR 오류: {e}")
-    print(f"ERROR 오류 타입: {type(e).__name__}")
-    
-    # Python 버전 확인
-    python_version = sys.version_info
-    print(f"\n현재 Python 버전: {python_version.major}.{python_version.minor}.{python_version.micro}")
-    
+    logger.debug("tkinterdnd2 import 실패: %s (%s)", e, type(e).__name__)
+
     # Python 3.13 + tix 오류 확인
+    python_version = sys.version_info
     if python_version.major == 3 and python_version.minor >= 13 and 'tix' in str(e):
-        print("\nWARN  Python 3.13 호환성 문제!")
-        print("   Python 3.13에서 tkinter.tix 모듈이 제거되어 tkinterdnd2가 작동하지 않습니다.")
-        print("\n해결 방법:")
-        print("  1. (추천) Python 3.12 이하 버전 사용")
-        print("  2. 드래그 앤 드롭 없이 '파일 선택' 버튼 사용 (모든 기능 정상 작동)")
-        print("  3. tkinterdnd2 최신 버전 시도: pip install tkinterdnd2 --upgrade")
+        logger.warning(
+            "Python %d.%d에서 tkinter.tix 모듈이 제거되어 tkinterdnd2가 작동하지 않습니다. "
+            "'파일 선택' 버튼으로 모든 기능을 사용할 수 있습니다.",
+            python_version.major, python_version.minor
+        )
     else:
-        import traceback
-        print("\n상세 오류:")
-        traceback.print_exc()
-        print("\n해결 방법:")
-        print("  1. pip install tkinterdnd2==0.3.0")
-        print("  2. 현재 Python 환경 확인: python --version")
-        print("  3. pip list | findstr tkinterdnd2")
-    
-    print("\nINFO 참고: 드래그 앤 드롭 없이도 '파일 선택' 버튼으로 모든 기능을 사용할 수 있습니다.")
-    
+        logger.debug("tkinterdnd2 사용 불가 - '파일 선택' 버튼으로 모든 기능을 사용할 수 있습니다.")
+
     DND_FILES = None
     TkinterDnD = None
     TKDND_AVAILABLE = False
-
-print("="*70 + "\n")
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -159,11 +145,13 @@ class ConfigManager:
         "extensions": [".hwp", ".hwpx", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"],
         "pdf_output_folder": "",  # 빈 문자열이면 원본 파일과 같은 폴더에 저장
         "hwpx_converter_path": r"C:\Program Files (x86)\Hnc\HwpxConverter\HwpxConverter.exe",
+        "hancom_pdf_printer": "Hancom PDF",  # 한컴 PDF 프린터 이름 (설정에서 변경 가능)
         "save_logs": False,
         "log_file_path": "monitor_log.txt",
         "window_geometry": "800x600",
         "theme": "dark",
-        "debug_mode": False
+        "debug_mode": False,
+        "auto_convert_pdf": True
     }
     
     def __init__(self, config_path: str = CONFIG_PATH):
@@ -182,8 +170,8 @@ class ConfigManager:
                             config[key] = value
                     return config
         except Exception as e:
-            print(f"설정 파일 로드 오류: {e}")
-        
+            logger.error("설정 파일 로드 오류: %s", e)
+
         # 기본 설정 반환
         return self.DEFAULT_CONFIG.copy()
     
@@ -193,15 +181,20 @@ class ConfigManager:
             with open(self.config_path, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            print(f"설정 파일 저장 오류: {e}")
+            logger.error("설정 파일 저장 오류: %s", e)
     
     def get(self, key: str, default=None):
         """설정 값 가져오기"""
         return self.config.get(key, default)
     
     def set(self, key: str, value):
-        """설정 값 설정"""
+        """설정 값 설정 (단일 항목; 저장 포함)"""
         self.config[key] = value
+        self.save_config()
+
+    def batch_update(self, updates: dict):
+        """여러 설정을 한 번에 업데이트하고 저장 (파일 I/O 1회)"""
+        self.config.update(updates)
         self.save_config()
 
 
@@ -380,16 +373,9 @@ class HWPXConverter:
                 
                 time.sleep(FILE_ACCESS_WAIT)
                 retry_count += 1
-            
-            # 재시도 후에도 파일이 없으면 실패
-            if os.path.exists(hwpx_path):
-                try:
-                    os.remove(filepath)
-                    return True, f"{filename} → {name_wo_ext}.hwpx"
-                except (OSError, PermissionError) as e:
-                    return False, f"원본 파일 삭제 실패 ({filepath}): {str(e)}"
-            else:
-                return False, f"변환 실패: HWPX 파일이 생성되지 않았습니다 ({hwpx_path})"
+
+            # 루프 종료: 최대 재시도 초과 → 변환 실패
+            return False, f"변환 실패: HWPX 파일이 생성되지 않았습니다 ({hwpx_path})"
                 
         except subprocess.TimeoutExpired:
             return False, f"변환 시간 초과: {filepath}"
@@ -404,10 +390,11 @@ class HWPXConverter:
 class PDFConverterQueue:
     """PDF 변환 작업 큐 관리 클래스 (순차 처리)"""
     
-    def __init__(self, log_callback: Optional[Callable] = None, stats_callback: Optional[Callable] = None):
+    def __init__(self, log_callback: Optional[Callable] = None, stats_callback: Optional[Callable] = None, config: Optional['ConfigManager'] = None):
         self.queue = queue.Queue()
         self.log_callback = log_callback
         self.stats_callback = stats_callback  # 통계 업데이트 콜백
+        self.config = config  # 설정 참조 (프린터 이름 등 런타임 조회용)
         self.is_processing = False
         self.processing_thread = None
         self.lock = threading.Lock()  # 동시 접근 방지
@@ -435,7 +422,7 @@ class PDFConverterQueue:
     
     def _initialize_com(self) -> bool:
         """COM 초기화
-        
+
         Returns:
             초기화 성공 여부
         """
@@ -445,12 +432,21 @@ class PDFConverterQueue:
                 pythoncom.CoInitialize()
                 return True
             except pythoncom.com_error as e:
-                # 이미 초기화된 경우 (CO_E_ALREADYINITIALIZED = -2147221008)
-                if hasattr(e, 'args') and len(e.args) > 0 and e.args[0] == -2147221008:
+                # 이미 초기화된 경우:
+                #   CO_E_ALREADYINITIALIZED = -2147221008 (0x80040110) - 같은 스레드에서 재초기화
+                #   RPC_E_CHANGED_MODE = -2147417850 (0x80010106) - 다른 스레드 모델로 이미 초기화
+                # 두 경우 모두 COM은 정상 사용 가능
+                ALREADY_INITIALIZED_CODES = {-2147221008, -2147417850}
+                error_code = e.args[0] if hasattr(e, 'args') and e.args else None
+                if error_code in ALREADY_INITIALIZED_CODES:
                     return True
-                return True  # 다른 오류는 무시하고 계속 진행
+                # 기타 COM 오류: 실제 초기화 실패
+                if self.log_callback:
+                    self.log_callback(f"COM 초기화 실패 (code={error_code}): {e}", "warning")
+                return False
             except Exception:
-                return True  # 이미 초기화된 경우일 수 있으므로 True로 설정
+                # COM 관련이 아닌 예외: 실패로 처리
+                return False
         except ImportError:
             return False  # pythoncom이 없으면 False
         except Exception:
@@ -514,8 +510,9 @@ class PDFConverterQueue:
                         self.queue.task_done()
                         continue
                     
-                    # PDF 변환 실행 (순차 처리 보장)
-                    success, result = PDFConverter.convert_hwp_to_pdf(filepath, output_dir, skip_check=True)
+                    # PDF 변환 실행 (순차 처리 보장, 설정에서 프린터 이름 조회)
+                    printer_name = self.config.get("hancom_pdf_printer", "Hancom PDF") if self.config else "Hancom PDF"
+                    success, result = PDFConverter.convert_hwp_to_pdf(filepath, output_dir, skip_check=True, printer_name=printer_name)
                     
                     # 변환 후 추가 대기 (한컴오피스 완전 종료 보장)
                     time.sleep(PDF_CONVERSION_WAIT)
@@ -540,11 +537,12 @@ class PDFConverterQueue:
                 except queue.Empty:
                     # 큐가 비어있으면 잠시 대기 후 다시 확인
                     time.sleep(QUEUE_EMPTY_WAIT)
-                    # 큐가 계속 비어있으면 처리 종료
-                    if self.queue.empty():
-                        with self.lock:
+                    # lock 내에서 원자적으로 확인 후 처리 종료 (race condition 방지)
+                    with self.lock:
+                        if self.queue.empty():
                             self.is_processing = False
-                        break
+                            break
+                    # 큐에 새 작업이 추가된 경우 계속 처리
                 except Exception as e:
                     if self.log_callback:
                         self.log_callback(f"PDF 변환 큐 처리 오류: {str(e)}", "error")
@@ -563,7 +561,7 @@ class PDFConverter:
     """PDF 변환 클래스 (참조 코드 기반)"""
     
     @staticmethod
-    def convert_hwp_to_pdf(filepath: str, output_dir: Optional[str] = None, skip_check: bool = False) -> Tuple[bool, Optional[str]]:
+    def convert_hwp_to_pdf(filepath: str, output_dir: Optional[str] = None, skip_check: bool = False, printer_name: str = "Hancom PDF") -> Tuple[bool, Optional[str]]:
         """HWP/HWPX 파일을 PDF로 변환"""
         if not PYHWPX_AVAILABLE or pyhwpx is None:
             return False, "pyhwpx 라이브러리가 설치되지 않았습니다"
@@ -628,7 +626,7 @@ class PDFConverter:
             
             # PDF 프린터 설정
             pset.SetItem("PrintMethod", 0)
-            pset.SetItem("PrinterName", "Hancom PDF")
+            pset.SetItem("PrinterName", printer_name)
             pset.SetItem("FileName", output_path)
             pset.SetItem("SaveToFile", True)
             
@@ -685,6 +683,7 @@ class FileMonitorHandler(FileSystemEventHandler):
         self.extensions = [ext.lower() for ext in extensions]
         self.processing_files = set()  # 중복 처리 방지
         self.processed_files = set()  # 처리 완료된 파일 (재감지 방지)
+        self._files_lock = threading.Lock()  # processing_files 스레드 안전성 보장
     
     def _should_process_file(self, filepath: str) -> bool:
         """파일을 처리해야 하는지 확인"""
@@ -710,16 +709,25 @@ class FileMonitorHandler(FileSystemEventHandler):
         if EXISTING_PREFIX_PATTERN.match(filename):
             return False
         
-        # 중복 처리 방지
-        if filepath in self.processing_files:
-            return False
-        
-        # 이미 처리 완료된 파일은 무시 (재감지 방지)
-        if filepath in self.processed_files:
-            return False
-        
+        # 중복 처리 방지 및 처리 완료 파일 확인 (락 없이 빠른 경로 확인)
+        with self._files_lock:
+            if filepath in self.processing_files:
+                return False
+            if filepath in self.processed_files:
+                return False
+
         return True
-    
+
+    def _discard_processed(self, filepath: str):
+        """처리 완료 목록에서 안전하게 제거"""
+        with self._files_lock:
+            self.processed_files.discard(filepath)
+
+    def _discard_processing(self, filepath: str):
+        """처리 중 목록에서 안전하게 제거"""
+        with self._files_lock:
+            self.processing_files.discard(filepath)
+
     def _wait_for_file_ready(self, filepath: str, max_wait_seconds: float = FILE_READY_TIMEOUT) -> bool:
         """파일이 완전히 생성되고 안정화될 때까지 대기"""
         start_time = time.time()
@@ -764,16 +772,19 @@ class FileMonitorHandler(FileSystemEventHandler):
         """파일 처리 (공통 로직)"""
         if not self._should_process_file(filepath):
             return
-        
+
         # 파일이 완전히 준비될 때까지 대기
         if not self._wait_for_file_ready(filepath):
             return
-        
+
         ext = os.path.splitext(filepath)[1].lower()
-        
-        # 중복 처리 방지
-        self.processing_files.add(filepath)
-        
+
+        # 원자적 check-then-add로 중복 처리 방지 (스레드 안전)
+        with self._files_lock:
+            if filepath in self.processing_files:
+                return
+            self.processing_files.add(filepath)
+
         # 콜백 호출 (별도 스레드에서)
         if self.callback:
             def callback_wrapper():
@@ -781,17 +792,19 @@ class FileMonitorHandler(FileSystemEventHandler):
                     # 콜백 실행
                     self.callback(filepath, ext)
                     # 처리 완료된 파일로 표시 (재감지 방지)
-                    self.processed_files.add(filepath)
+                    with self._files_lock:
+                        self.processed_files.add(filepath)
                     # 일정 시간 후 처리 완료 목록에서 제거 (파일명 변경 후 재감지 방지 시간)
-                    threading.Timer(PROCESSED_FILE_TIMEOUT, lambda: self.processed_files.discard(filepath)).start()
+                    threading.Timer(PROCESSED_FILE_TIMEOUT, lambda: self._discard_processed(filepath)).start()
                 finally:
                     # 처리 중 목록에서 제거
-                    self.processing_files.discard(filepath)
-            
+                    with self._files_lock:
+                        self.processing_files.discard(filepath)
+
             threading.Thread(target=callback_wrapper, daemon=True).start()
         else:
             # 콜백이 없으면 처리 중 목록에서만 제거
-            threading.Timer(PROCESSING_FILE_TIMEOUT, lambda: self.processing_files.discard(filepath)).start()
+            threading.Timer(PROCESSING_FILE_TIMEOUT, lambda: self._discard_processing(filepath)).start()
     
     def on_created(self, event):
         """파일 생성 이벤트 처리"""
@@ -824,7 +837,8 @@ class FileMonitor:
         # PDF 변환 큐 초기화 (순차 처리)
         self.pdf_queue = PDFConverterQueue(
             log_callback=log_callback,
-            stats_callback=self._update_stats
+            stats_callback=self._update_stats,
+            config=config
         )
     
     def _update_stats(self, result: str):
@@ -994,46 +1008,6 @@ class FileMonitor:
                 self.stats["failed"] += 1
 
 
-class AppLogger:
-    """애플리케이션 로거 클래스"""
-    
-    def __init__(self, debug_mode: bool = False):
-        """로거 초기화
-        
-        Args:
-            debug_mode: 디버그 모드 활성화 여부
-        """
-        self.debug_mode = debug_mode
-        self.logger = logging.getLogger('FileMonitor')
-        self.logger.setLevel(logging.DEBUG if debug_mode else logging.INFO)
-        
-        # 핸들러가 없으면 추가
-        if not self.logger.handlers:
-            # 콘솔 핸들러
-            console_handler = logging.StreamHandler()
-            console_handler.setLevel(logging.DEBUG if debug_mode else logging.WARNING)
-            console_format = logging.Formatter('%(levelname)s: %(message)s')
-            console_handler.setFormatter(console_format)
-            self.logger.addHandler(console_handler)
-    
-    def debug(self, message: str):
-        """디버그 메시지"""
-        if self.debug_mode:
-            self.logger.debug(message)
-    
-    def info(self, message: str):
-        """정보 메시지"""
-        self.logger.info(message)
-    
-    def warning(self, message: str):
-        """경고 메시지"""
-        self.logger.warning(message)
-    
-    def error(self, message: str):
-        """에러 메시지"""
-        self.logger.error(message)
-
-
 class LogQueue:
     """로그 큐 클래스 (스레드 안전)"""
     
@@ -1060,31 +1034,25 @@ if TKDND_AVAILABLE:
         """드래그 앤 드롭을 지원하는 CTk 루트"""
         
         def __init__(self, *args, **kwargs):
-            print("\n" + "="*60)
-            print("DnDCTk 초기화 시작")
-            print("="*60)
-            
+            logger.debug("DnDCTk 초기화 시작")
+
             # CTk 초기화
             ctk.CTk.__init__(self, *args, **kwargs)
-            print("OK CTk 초기화 완료")
-            
+            logger.debug("CTk 초기화 완료")
+
             # TkinterDnD.DnDWrapper 초기화
             try:
                 TkinterDnD.DnDWrapper.__init__(self)
-                print("OK TkinterDnD.DnDWrapper 초기화 완료")
+                logger.debug("TkinterDnD.DnDWrapper 초기화 완료")
             except Exception as e:
-                print(f"ERROR TkinterDnD.DnDWrapper 초기화 오류: {e}")
-                import traceback
-                traceback.print_exc()
-            
+                logger.error("TkinterDnD.DnDWrapper 초기화 오류: %s", e)
+
             # 간단한 tkdnd 패키지 확인 (상세 로드는 _ensure_tkdnd_loaded에서)
             try:
                 self.TkdndVersion = self.tk.call('package', 'require', 'tkdnd')
-                print(f"OK tkdnd 버전 {self.TkdndVersion} 초기 로드 성공")
+                logger.debug("tkdnd 버전 %s 초기 로드 성공", self.TkdndVersion)
             except Exception as e:
-                print(f"WARN tkdnd 초기 로드 실패 (나중에 재시도): {e}")
-            
-            print("="*60 + "\n")
+                logger.debug("tkdnd 초기 로드 실패 (나중에 재시도): %s", e)
 else:
     class DnDCTk(ctk.CTk):
         """드래그 앤 드롭 비활성 CTk 루트"""
@@ -1109,13 +1077,14 @@ class MonitorApp(DnDCTk):
         self.log_queue = LogQueue()
         self.tray_icon = None
         self.tray_thread = None
-        
+        self._log_timer_id = None  # update_logs 타이머 ID (종료 시 cancel 용)
+
         # UI 초기화
         self.setup_ui()
         self.setup_tray()
-        
+
         # 로그 업데이트 타이머
-        self.after(100, self.update_logs)
+        self._log_timer_id = self.after(100, self.update_logs)
     
     def setup_ui(self):
         """UI 설정"""
@@ -1140,10 +1109,17 @@ class MonitorApp(DnDCTk):
         self.status_label = ctk.CTkLabel(
             status_info_frame,
             text="● 중지됨",
+            text_color="gray",
             font=ctk.CTkFont(size=16, weight="bold")
         )
         self.status_label.pack(side="left", padx=10, pady=5)
-        
+
+        # 처리 통계 인라인 표시
+        self.stats_label = ctk.CTkLabel(
+            status_info_frame, text="", font=ctk.CTkFont(size=12)
+        )
+        self.stats_label.pack(side="left", padx=10, pady=5)
+
         # 폴더 경로 표시 (줄바꿈 가능하도록 설정)
         self.folder_label = ctk.CTkLabel(
             status_info_frame,
@@ -1202,12 +1178,17 @@ class MonitorApp(DnDCTk):
         settings_button.pack(side="right", padx=5, pady=5)
 
         # 드롭 영역
-        self.drop_frame = ctk.CTkFrame(main_container)
+        self.drop_frame = ctk.CTkFrame(
+            main_container,
+            border_width=2,
+            border_color="gray50",
+            fg_color=("gray90", "gray20")
+        )
         self.drop_frame.pack(fill="x", pady=(0, 10))
-        
+
         # 드롭 영역 레이블과 버튼을 담을 컨테이너
-        drop_content_frame = ctk.CTkFrame(self.drop_frame)
-        drop_content_frame.pack(fill="x", padx=10, pady=12)
+        drop_content_frame = ctk.CTkFrame(self.drop_frame, fg_color="transparent")
+        drop_content_frame.pack(fill="x", padx=10, pady=20)
         
         self.drop_label = ctk.CTkLabel(
             drop_content_frame,
@@ -1229,34 +1210,6 @@ class MonitorApp(DnDCTk):
         
         # 드롭 타겟 설정 시도 (사용 가능한 경우)
         self.setup_drop_target()
-        
-        # 중앙: 통계 및 진행 상황
-        stats_frame = ctk.CTkFrame(main_container)
-        stats_frame.pack(fill="x", pady=(0, 10))
-        
-        stats_title = ctk.CTkLabel(
-            stats_frame,
-            text="📊 처리 통계",
-            font=ctk.CTkFont(size=14, weight="bold")
-        )
-        stats_title.pack(anchor="w", padx=10, pady=(10, 5))
-        
-        stats_content = ctk.CTkFrame(stats_frame)
-        stats_content.pack(fill="x", padx=10, pady=(0, 10))
-        
-        self.success_label = ctk.CTkLabel(
-            stats_content,
-            text="✅ 성공: 0",
-            font=ctk.CTkFont(size=12)
-        )
-        self.success_label.pack(side="left", padx=20, pady=10)
-        
-        self.failed_label = ctk.CTkLabel(
-            stats_content,
-            text="❌ 실패: 0",
-            font=ctk.CTkFont(size=12)
-        )
-        self.failed_label.pack(side="left", padx=20, pady=10)
         
         # 하단: 로그 패널
         log_frame = ctk.CTkFrame(main_container)
@@ -1281,7 +1234,26 @@ class MonitorApp(DnDCTk):
             height=25
         )
         self.log_toggle_button.pack(side="right", padx=10, pady=5)
-        
+
+        # 자동 스크롤 체크박스
+        self.auto_scroll_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            log_header, text="자동 스크롤", variable=self.auto_scroll_var,
+            width=90, height=25
+        ).pack(side="right", padx=5, pady=5)
+
+        # 지우기 버튼
+        ctk.CTkButton(
+            log_header, text="지우기", command=self.clear_log,
+            width=55, height=25, fg_color="gray40", hover_color="gray30"
+        ).pack(side="right", padx=3, pady=5)
+
+        # 저장 버튼
+        ctk.CTkButton(
+            log_header, text="저장", command=self.save_log_to_file,
+            width=55, height=25
+        ).pack(side="right", padx=3, pady=5)
+
         # 로그 텍스트 박스
         self.log_textbox = ctk.CTkTextbox(
             log_frame,
@@ -1325,7 +1297,7 @@ class MonitorApp(DnDCTk):
             self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
             self.tray_thread.start()
         except Exception as e:
-            print(f"시스템 트레이 설정 오류: {e}")
+            logger.error("시스템 트레이 설정 오류: %s", e)
             self.tray_icon = None
     
     def _find_tkdnd_paths(self) -> list:
@@ -1383,38 +1355,15 @@ class MonitorApp(DnDCTk):
     def _ensure_tkdnd_loaded(self) -> bool:
         """tkdnd 패키지 로드 시도 (플랫폼 맞춤 버전)"""
         if not TKDND_AVAILABLE:
-            print("ERROR tkinterdnd2 라이브러리를 사용할 수 없습니다.")
+            logger.warning("tkinterdnd2 라이브러리를 사용할 수 없습니다.")
             return False
-        
+
         try:
             import tkinterdnd2
-            import platform
-            
+
             tkdnd_base_path = os.path.dirname(tkinterdnd2.__file__)
-            print(f"INFO tkinterdnd2 설치 경로: {tkdnd_base_path}")
-            
-            # 현재 플랫폼 감지
-            system = sys.platform.lower()
-            machine = platform.machine().lower()
-            is_64bit = sys.maxsize > 2**32
-            
-            # 플랫폼별 디렉토리 이름 결정
-            if system.startswith("win"):
-                if "arm" in machine:
-                    platform_name = "win-arm64"
-                elif is_64bit:
-                    platform_name = "win-x64"
-                else:
-                    platform_name = "win-x86"
-            elif system.startswith("linux"):
-                platform_name = "linux-arm64" if "arm" in machine else "linux-x64"
-            elif system.startswith("darwin"):
-                platform_name = "osx-arm64" if "arm" in machine else "osx-x64"
-            else:
-                platform_name = None
-            
-            print(f"INFO 감지된 플랫폼: {platform_name} ({'64비트' if is_64bit else '32비트'})")
-            
+            logger.debug("tkinterdnd2 설치 경로: %s", tkdnd_base_path)
+
             # tkdnd 폴더 찾기
             tkdnd_root = None
             for item in os.listdir(tkdnd_base_path):
@@ -1422,101 +1371,66 @@ class MonitorApp(DnDCTk):
                     full_path = os.path.join(tkdnd_base_path, item)
                     if os.path.isdir(full_path):
                         tkdnd_root = full_path
-                        print(f"  └─ 발견: {item}")
+                        logger.debug("tkdnd 폴더 발견: %s", item)
                         break
-            
+
             if not tkdnd_root:
-                print("ERROR tkdnd 폴더를 찾을 수 없습니다.")
+                logger.error("tkdnd 폴더를 찾을 수 없습니다.")
                 return False
-            
-            # 플랫폼별 경로만 추가 (루트 경로 제외!)
-            platform_path = None
-            if platform_name:
-                platform_path = os.path.join(tkdnd_root, platform_name)
-                if os.path.isdir(platform_path):
-                    print(f"  OK 플랫폼 경로 발견: {platform_name}")
-                else:
-                    print(f"  ERROR 플랫폼 경로 없음: {platform_name}")
-                    platform_path = None
-            
+
+            # _get_tkdnd_platform_dir로 플랫폼별 경로 결정 (중복 로직 제거)
+            platform_path = self._get_tkdnd_platform_dir(tkdnd_root)
             if not platform_path:
-                print("ERROR 현재 플랫폼에 맞는 tkdnd 경로를 찾을 수 없습니다.")
+                logger.error("현재 플랫폼에 맞는 tkdnd 경로를 찾을 수 없습니다.")
                 return False
-            
+
+            logger.debug("tkdnd 플랫폼 경로: %s", platform_path)
+
             # Tcl auto_path에 플랫폼별 경로만 추가 (루트 경로는 추가하지 않음!)
-            print("\nINFO Tcl auto_path에 경로 추가 중...")
             try:
                 self.tk.call("lappend", "auto_path", platform_path)
-                print(f"  OK {platform_path}")
             except Exception as e:
-                print(f"  ERROR {platform_path}: {e}")
+                logger.error("Tcl auto_path 추가 실패 (%s): %s", platform_path, e)
                 return False
-            
-            # tkdnd 패키지 로드 시도
-            print("\nINFO tkdnd 패키지 로드 시도...")
-            
+
             # 방법 1: 일반 로드
             try:
                 version = self.tk.eval("package require tkdnd")
-                print(f"OK tkdnd 버전 {version} 로드 성공!")
-                print(f"OK 플랫폼: {platform_name}\n")
+                logger.debug("tkdnd 버전 %s 로드 성공 (방법 1)", version)
                 return True
             except Exception as e:
-                print(f"WARN 방법 1 실패: {e}")
-            
+                logger.debug("tkdnd 로드 방법 1 실패: %s", e)
+
             # 방법 2: pkgIndex.tcl을 올바른 컨텍스트에서 로드
-            print("\nINFO 방법 2: pkgIndex.tcl 직접 로드 시도...")
             try:
                 pkg_index_path = os.path.join(platform_path, "pkgIndex.tcl")
                 if os.path.exists(pkg_index_path):
-                    # $dir 변수 설정
                     tcl_platform_path = platform_path.replace('\\', '/')
                     self.tk.eval(f'set dir "{tcl_platform_path}"')
-                    
-                    # pkgIndex.tcl 로드
                     tcl_pkg_index = pkg_index_path.replace('\\', '/')
                     self.tk.eval(f'source "{tcl_pkg_index}"')
-                    print("  OK pkgIndex.tcl 로드 완료")
-                    
-                    # 다시 패키지 로드 시도
                     version = self.tk.eval("package require tkdnd")
-                    print(f"OK tkdnd 버전 {version} 로드 성공!")
-                    print(f"OK 플랫폼: {platform_name}\n")
+                    logger.debug("tkdnd 버전 %s 로드 성공 (방법 2: pkgIndex.tcl)", version)
                     return True
             except Exception as e:
-                print(f"WARN 방법 2 실패: {e}")
-            
+                logger.debug("tkdnd 로드 방법 2 실패: %s", e)
+
             # 방법 3: DLL 직접 로드
-            print("\nINFO 방법 3: DLL 직접 로드 시도...")
             try:
                 dll_path = os.path.join(platform_path, "libtkdnd2.9.4.dll")
                 if os.path.exists(dll_path):
                     tcl_dll_path = dll_path.replace('\\', '/')
                     self.tk.eval(f'load "{tcl_dll_path}" tkdnd')
-                    print("  OK DLL 직접 로드 완료")
-                    print("OK tkdnd 로드 성공!")
-                    print(f"OK 플랫폼: {platform_name}\n")
+                    logger.debug("tkdnd 로드 성공 (방법 3: DLL 직접 로드)")
                     return True
             except Exception as e:
-                print(f"WARN 방법 3 실패: {e}")
-            
-            # 모든 방법 실패
-            print("\nERROR 모든 로드 방법 실패")
-            
-            # 디버깅 정보
-            try:
-                available = self.tk.eval("package names")
-                if "tkdnd" in available:
-                    print("WARN tkdnd는 목록에 있지만 로드 실패")
-            except:
-                pass
-            
+                logger.debug("tkdnd 로드 방법 3 실패: %s", e)
+
+            logger.error("tkdnd 모든 로드 방법 실패")
             return False
-                
+
         except Exception as e:
-            print(f"ERROR _ensure_tkdnd_loaded 전체 오류: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error("_ensure_tkdnd_loaded 전체 오류: %s", e)
             return False
 
     def _try_load_tkdnd_from_path(self, path: str) -> bool:
@@ -1539,58 +1453,43 @@ class MonitorApp(DnDCTk):
     
     def setup_drop_target(self):
         """드롭 영역 등록"""
-        print("\n" + "="*60)
-        print("setup_drop_target 시작")
-        print("="*60)
-        
+        logger.debug("setup_drop_target 시작")
+
         if not TKDND_AVAILABLE:
-            print("ERROR tkinterdnd2를 import할 수 없습니다.")
+            logger.warning("tkinterdnd2를 import할 수 없습니다.")
             self.drop_label.configure(text="파일 선택 버튼을 사용하세요 (드롭 기능 비활성)")
             return
-        
+
         try:
-            # tkdnd 패키지 로드 확인
-            print("\nINFO tkdnd 패키지 로드 확인 중...")
             if not self._ensure_tkdnd_loaded():
                 self.drop_label.configure(text="파일 선택 버튼을 사용하세요 (드롭 기능 비활성)")
                 self.add_log("드롭 기능이 비활성화되었습니다. tkdnd 패키지를 로드할 수 없습니다.", "warning")
-                print("ERROR tkdnd 패키지 로드 실패\n" + "="*60 + "\n")
                 return
-            
+
             # 루트 윈도우 전체를 드롭 타겟으로 등록
-            print("\nINFO 드롭 타겟 등록 중...")
-            print(f"  - DND_FILES: {DND_FILES}")
-            print(f"  - 윈도우 객체: {self}")
-            
             self.drop_target_register(DND_FILES)
-            print("  OK drop_target_register 완료")
-            
             self.dnd_bind("<<Drop>>", self.handle_drop)
-            print("  OK dnd_bind 완료")
-            
+            self.dnd_bind("<<DragEnter>>", self._on_drag_enter)
+            self.dnd_bind("<<DragLeave>>", self._on_drag_leave)
+
             self.drop_label.configure(text="HWP/HWPX 파일을 여기로 드롭 (창 전체)")
             self.add_log("드롭 기능이 활성화되었습니다.", "success")
-            
-            print("\nOK 드롭 기능 활성화 완료!")
-            print("="*60 + "\n")
-            
+            logger.debug("드롭 기능 활성화 완료")
+
         except Exception as e:
             # 실패 시 명확한 오류 메시지
             self.drop_label.configure(text="파일 선택 버튼을 사용하세요 (드롭 기능 비활성)")
             self.add_log(f"드롭 기능 초기화 실패: {str(e)}", "error")
-            print("\nERROR 드롭 초기화 실패")
-            print(f"오류: {e}")
-            import traceback
-            traceback.print_exc()
-            print("="*60 + "\n")
+            logger.error("드롭 초기화 실패: %s", e)
     
     def handle_drop(self, event):
         """드롭된 파일을 PDF 변환 큐에 추가"""
         filepaths = parse_dnd_files(getattr(event, "data", ""))
+        self._on_drag_leave(event)
         if not filepaths:
             self.add_log("드롭된 파일이 없습니다.", "warning")
             return
-        
+
         self._process_files_for_pdf(filepaths, source="드롭")
     
     def select_files_for_pdf(self):
@@ -1646,6 +1545,39 @@ class MonitorApp(DnDCTk):
         elif skipped:
             self.add_log(f"{source}된 파일 중 변환 가능한 HWP/HWPX 파일이 없습니다.", "warning")
     
+    def _on_drag_enter(self, event):
+        """드래그 진입 시 드롭 영역 색상 변경"""
+        self.drop_frame.configure(
+            fg_color=("lightblue", "#1a3a5c"),
+            border_color="royalblue"
+        )
+
+    def _on_drag_leave(self, event=None):
+        """드래그 이탈 시 드롭 영역 색상 복원"""
+        self.drop_frame.configure(
+            fg_color=("gray90", "gray20"),
+            border_color="gray50"
+        )
+
+    def clear_log(self):
+        """로그 내용 지우기"""
+        self.log_textbox.configure(state="normal")
+        self.log_textbox.delete("1.0", "end")
+        self.log_textbox.configure(state="disabled")
+
+    def save_log_to_file(self):
+        """로그를 파일로 저장"""
+        path = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("텍스트 파일", "*.txt"), ("모든 파일", "*.*")],
+            title="로그 저장"
+        )
+        if path:
+            content = self.log_textbox.get("1.0", "end")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            self.add_log(f"로그 저장됨: {path}", "success")
+
     def show_window(self, icon=None, item=None):
         """창 표시"""
         self.deiconify()
@@ -1676,29 +1608,40 @@ class MonitorApp(DnDCTk):
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     f.write(f"[{timestamp}] [{level.upper()}] {message}\n")
             except Exception as e:
-                print(f"로그 파일 저장 오류: {e}")
+                logger.error("로그 파일 저장 오류: %s", e)
     
+    MAX_LOG_LINES = 1000  # 로그 최대 라인 수
+
     def update_logs(self):
         """로그 업데이트 (주기적 호출)"""
-        logs = self.log_queue.get_all()
-        for message, level, timestamp in logs:
-            timestamp_str = timestamp.strftime("%H:%M:%S")
-            
-            # 타임스탬프와 메시지만 표시
-            prefix = f"[{timestamp_str}] "
-            full_message = f"{prefix}{message}\n"
-            
-            # 로그 레벨에 따라 태그 적용하여 컬러링
-            self.log_textbox.insert("end", full_message, level)
-            self.log_textbox.see("end")
-        
-        # 통계 업데이트
-        if self.monitor:
-            self.success_label.configure(text=f"✅ 성공: {self.monitor.stats['success']}")
-            self.failed_label.configure(text=f"❌ 실패: {self.monitor.stats['failed']}")
-        
-        # 다음 업데이트 예약
-        self.after(100, self.update_logs)
+        try:
+            logs = self.log_queue.get_all()
+            for message, level, timestamp in logs:
+                timestamp_str = timestamp.strftime("%H:%M:%S")
+                full_message = f"[{timestamp_str}] {message}\n"
+                self.log_textbox.insert("end", full_message, level)
+
+            if logs and self.auto_scroll_var.get():
+                self.log_textbox.see("end")
+
+            # 최대 라인 수 초과 시 상단 잘라내기
+            if logs:
+                line_count = int(self.log_textbox.index('end-1c').split('.')[0])
+                if line_count > self.MAX_LOG_LINES:
+                    trim_to = line_count - self.MAX_LOG_LINES
+                    self.log_textbox.delete('1.0', f'{trim_to + 1}.0')
+
+            # 통계 인라인 업데이트
+            if self.monitor:
+                s = self.monitor.stats['success']
+                f = self.monitor.stats['failed']
+                self.stats_label.configure(text=f"✅ {s}  ❌ {f}")
+
+            # 다음 업데이트 예약 (ID 저장)
+            self._log_timer_id = self.after(100, self.update_logs)
+        except Exception:
+            # 앱 종료 중 위젯 파괴 등으로 발생하는 예외 무시
+            pass
     
     def toggle_monitoring(self, icon=None, item=None):
         """모니터링 시작/중지"""
@@ -1707,6 +1650,8 @@ class MonitorApp(DnDCTk):
             self.monitor.stop_monitoring()
             self.status_label.configure(text="● 중지됨", text_color="gray")
             self.toggle_button.configure(text="시작")
+            self.stats_label.configure(text="")
+            self.title("파일 모니터링 및 자동 처리")
             self.add_log("모니터링이 중지되었습니다.", "info")
         else:
             # 시작
@@ -1715,14 +1660,15 @@ class MonitorApp(DnDCTk):
                 self.add_log("모니터링 폴더를 먼저 설정해주세요.", "error")
                 self.open_settings()
                 return
-            
+
             if not self.monitor:
                 self.monitor = FileMonitor(self.config_manager, self.add_log)
-            
+
             if self.monitor.start_monitoring(folder_path):
                 self.status_label.configure(text="● 모니터링 중", text_color="green")
                 self.toggle_button.configure(text="중지")
                 self.folder_label.configure(text=f"폴더: {folder_path}")
+                self.title("파일 모니터링 - 모니터링 중")
                 self.add_log(f"모니터링 시작: {folder_path}", "success")
             else:
                 self.add_log("모니터링 시작에 실패했습니다.", "error")
@@ -1830,12 +1776,17 @@ class MonitorApp(DnDCTk):
     
     def quit_app(self, icon=None, item=None):
         """애플리케이션 종료"""
+        # 로그 업데이트 타이머 취소
+        if self._log_timer_id:
+            self.after_cancel(self._log_timer_id)
+            self._log_timer_id = None
+
         if self.monitor:
             self.monitor.stop_monitoring()
-        
+
         if self.tray_icon:
             self.tray_icon.stop()
-        
+
         self.quit()
         self.destroy()
 
@@ -1845,163 +1796,235 @@ class SettingsWindow(ctk.CTkToplevel):
     
     def __init__(self, parent, config_manager: ConfigManager):
         super().__init__(parent)
-        
+
         self.config_manager = config_manager
         self.title("설정")
-        self.geometry("500x600")
+        self.geometry("580x680")
         self.transient(parent)
-        
-        # 메인 프레임
-        main_frame = ctk.CTkScrollableFrame(self)
-        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
-        
-        # 폴더 선택
-        folder_frame = ctk.CTkFrame(main_frame)
-        folder_frame.pack(fill="x", pady=10)
-        
+
+        # ── 탭 뷰 ──
+        tabview = ctk.CTkTabview(self)
+        tabview.pack(fill="both", expand=True, padx=20, pady=(20, 0))
+
+        tab_basic = tabview.add("기본")
+        tab_convert = tabview.add("변환")
+        tab_other = tabview.add("기타")
+
+        # ══════════════════════════════
+        # 탭 1: 기본
+        # ══════════════════════════════
+        basic_scroll = ctk.CTkScrollableFrame(tab_basic)
+        basic_scroll.pack(fill="both", expand=True)
+
+        # 모니터링 폴더
         ctk.CTkLabel(
-            folder_frame,
+            basic_scroll,
             text="모니터링 폴더",
             font=ctk.CTkFont(size=14, weight="bold")
         ).pack(anchor="w", padx=10, pady=(10, 5))
-        
-        folder_input_frame = ctk.CTkFrame(folder_frame)
+
+        folder_input_frame = ctk.CTkFrame(basic_scroll)
         folder_input_frame.pack(fill="x", padx=10, pady=(0, 10))
-        
+
         self.folder_entry = ctk.CTkEntry(folder_input_frame)
         self.folder_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.folder_entry.insert(0, config_manager.get("monitor_folder", ""))
-        
+
         ctk.CTkButton(
-            folder_input_frame,
-            text="찾기",
-            command=self.browse_folder,
-            width=80
+            folder_input_frame, text="찾기", command=self.browse_folder, width=80
         ).pack(side="right")
-        
-        # 확장자 필터
-        extensions_frame = ctk.CTkFrame(main_frame)
-        extensions_frame.pack(fill="x", pady=10)
-        
+
+        # 처리할 확장자 (그룹별)
         ctk.CTkLabel(
-            extensions_frame,
+            basic_scroll,
             text="처리할 확장자",
             font=ctk.CTkFont(size=14, weight="bold")
         ).pack(anchor="w", padx=10, pady=(10, 5))
-        
+
         self.extension_vars = {}
-        extensions_list = [".hwp", ".hwpx", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf"]
         current_extensions = config_manager.get("extensions", [])
-        
-        for ext in extensions_list:
-            var = ctk.BooleanVar(value=ext in current_extensions)
-            self.extension_vars[ext] = var
-            
-            checkbox = ctk.CTkCheckBox(
-                extensions_frame,
-                text=ext,
-                variable=var
-            )
-            checkbox.pack(anchor="w", padx=20, pady=2)
-        
-        # PDF 출력 폴더 설정
-        pdf_frame = ctk.CTkFrame(main_frame)
-        pdf_frame.pack(fill="x", pady=10)
-        
+
+        ext_groups = [
+            ("── 한글 ──", [".hwp", ".hwpx"]),
+            ("── MS Office ──", [".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"]),
+            ("── 기타 ──", [".pdf"]),
+        ]
+        for group_label, exts in ext_groups:
+            ctk.CTkLabel(
+                basic_scroll,
+                text=group_label,
+                font=ctk.CTkFont(size=11),
+                text_color="gray"
+            ).pack(anchor="w", padx=15, pady=(8, 2))
+            for ext in exts:
+                var = ctk.BooleanVar(value=ext in current_extensions)
+                self.extension_vars[ext] = var
+                ctk.CTkCheckBox(basic_scroll, text=ext, variable=var).pack(
+                    anchor="w", padx=25, pady=2
+                )
+
+        # ══════════════════════════════
+        # 탭 2: 변환
+        # ══════════════════════════════
+        convert_scroll = ctk.CTkScrollableFrame(tab_convert)
+        convert_scroll.pack(fill="both", expand=True)
+
+        # 자동 PDF 변환 스위치
         ctk.CTkLabel(
-            pdf_frame,
-            text="PDF 변환 설정",
+            convert_scroll,
+            text="자동 PDF 변환",
             font=ctk.CTkFont(size=14, weight="bold")
         ).pack(anchor="w", padx=10, pady=(10, 5))
-        
-        # PDF 출력 폴더 설정
-        pdf_output_frame = ctk.CTkFrame(pdf_frame)
-        pdf_output_frame.pack(fill="x", padx=10, pady=(0, 10))
-        
+
+        self.auto_convert_var = ctk.BooleanVar(
+            value=config_manager.get("auto_convert_pdf", True)
+        )
+        ctk.CTkSwitch(
+            convert_scroll,
+            text="모니터링 중 자동으로 PDF 변환",
+            variable=self.auto_convert_var,
+            onvalue=True,
+            offvalue=False
+        ).pack(anchor="w", padx=20, pady=(0, 10))
+
+        # PDF 출력 폴더
         ctk.CTkLabel(
-            pdf_output_frame,
-            text="PDF 출력 폴더 (비워두면 원본 파일과 같은 폴더):",
-            font=ctk.CTkFont(size=11)
-        ).pack(anchor="w", pady=(0, 5))
-        
-        pdf_output_input_frame = ctk.CTkFrame(pdf_output_frame)
-        pdf_output_input_frame.pack(fill="x")
-        
-        self.pdf_output_entry = ctk.CTkEntry(pdf_output_input_frame)
+            convert_scroll,
+            text="PDF 출력 폴더",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(anchor="w", padx=10, pady=(10, 5))
+
+        ctk.CTkLabel(
+            convert_scroll,
+            text="비워두면 원본 파일과 같은 폴더에 저장",
+            font=ctk.CTkFont(size=11),
+            text_color="gray"
+        ).pack(anchor="w", padx=15, pady=(0, 5))
+
+        pdf_out_input = ctk.CTkFrame(convert_scroll)
+        pdf_out_input.pack(fill="x", padx=10, pady=(0, 10))
+
+        self.pdf_output_entry = ctk.CTkEntry(pdf_out_input)
         self.pdf_output_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
         pdf_output_folder = config_manager.get("pdf_output_folder", "")
         if pdf_output_folder:
             self.pdf_output_entry.insert(0, pdf_output_folder)
-        
+
         ctk.CTkButton(
-            pdf_output_input_frame,
-            text="찾기",
-            command=self.browse_pdf_output_folder,
-            width=80
+            pdf_out_input, text="찾기", command=self.browse_pdf_output_folder, width=80
         ).pack(side="right")
-        
-        # 로그 저장
-        log_frame = ctk.CTkFrame(main_frame)
-        log_frame.pack(fill="x", pady=10)
-        
+
+        # Hancom PDF 프린터 이름
+        ctk.CTkLabel(
+            convert_scroll,
+            text="Hancom PDF 프린터 이름",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(anchor="w", padx=10, pady=(10, 5))
+
+        self.printer_entry = ctk.CTkEntry(convert_scroll)
+        self.printer_entry.pack(fill="x", padx=10, pady=(0, 10))
+        self.printer_entry.insert(0, config_manager.get("hancom_pdf_printer", "Hancom PDF"))
+
+        # HWPX 변환기 경로
+        ctk.CTkLabel(
+            convert_scroll,
+            text="HWPX 변환기 경로",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(anchor="w", padx=10, pady=(10, 5))
+
+        hwpx_input_frame = ctk.CTkFrame(convert_scroll)
+        hwpx_input_frame.pack(fill="x", padx=10, pady=(0, 10))
+
+        self.hwpx_entry = ctk.CTkEntry(hwpx_input_frame)
+        self.hwpx_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.hwpx_entry.insert(0, config_manager.get("hwpx_converter_path", ""))
+
+        ctk.CTkButton(
+            hwpx_input_frame, text="찾기", command=self.browse_hwpx_converter, width=80
+        ).pack(side="right")
+
+        # ══════════════════════════════
+        # 탭 3: 기타
+        # ══════════════════════════════
+        other_scroll = ctk.CTkScrollableFrame(tab_other)
+        other_scroll.pack(fill="both", expand=True)
+
+        # 로그 파일 저장 스위치
+        ctk.CTkLabel(
+            other_scroll,
+            text="로그 파일",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(anchor="w", padx=10, pady=(10, 5))
+
         self.save_logs_var = ctk.BooleanVar(value=config_manager.get("save_logs", False))
-        ctk.CTkCheckBox(
-            log_frame,
+        ctk.CTkSwitch(
+            other_scroll,
             text="로그 파일 저장",
-            variable=self.save_logs_var
-        ).pack(anchor="w", padx=10, pady=10)
-        
-        log_path_frame = ctk.CTkFrame(log_frame)
+            variable=self.save_logs_var,
+            onvalue=True,
+            offvalue=False,
+            command=self._toggle_log_path_state
+        ).pack(anchor="w", padx=20, pady=(0, 5))
+
+        log_path_frame = ctk.CTkFrame(other_scroll)
         log_path_frame.pack(fill="x", padx=10, pady=(0, 10))
-        
-        ctk.CTkLabel(log_path_frame, text="로그 파일 경로:").pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(log_path_frame, text="로그 파일 경로:").pack(
+            side="left", padx=(0, 10)
+        )
         self.log_path_entry = ctk.CTkEntry(log_path_frame)
         self.log_path_entry.pack(side="left", fill="x", expand=True)
         self.log_path_entry.insert(0, config_manager.get("log_file_path", "monitor_log.txt"))
-        
-        # 테마 설정
-        theme_frame = ctk.CTkFrame(main_frame)
-        theme_frame.pack(fill="x", pady=10)
-        
+
+        # 테마
         ctk.CTkLabel(
-            theme_frame,
+            other_scroll,
             text="테마",
             font=ctk.CTkFont(size=14, weight="bold")
         ).pack(anchor="w", padx=10, pady=(10, 5))
-        
+
         self.theme_var = ctk.StringVar(value=config_manager.get("theme", "dark"))
         ctk.CTkRadioButton(
-            theme_frame,
-            text="다크",
-            variable=self.theme_var,
-            value="dark"
+            other_scroll, text="다크", variable=self.theme_var, value="dark"
         ).pack(anchor="w", padx=20, pady=2)
-        
         ctk.CTkRadioButton(
-            theme_frame,
-            text="라이트",
-            variable=self.theme_var,
-            value="light"
+            other_scroll, text="라이트", variable=self.theme_var, value="light"
         ).pack(anchor="w", padx=20, pady=2)
-        
-        # 버튼
-        button_frame = ctk.CTkFrame(main_frame)
-        button_frame.pack(fill="x", pady=20)
-        
+
+        # 디버그 모드
+        ctk.CTkLabel(
+            other_scroll,
+            text="개발자",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(anchor="w", padx=10, pady=(10, 5))
+
+        self.debug_mode_var = ctk.BooleanVar(
+            value=config_manager.get("debug_mode", False)
+        )
+        ctk.CTkCheckBox(
+            other_scroll, text="디버그 모드", variable=self.debug_mode_var
+        ).pack(anchor="w", padx=20, pady=(0, 10))
+
+        # 초기 로그 경로 활성화 상태 설정
+        self._toggle_log_path_state()
+
+        # ── 저장/취소 버튼 (탭 밖 하단 고정) ──
+        button_frame = ctk.CTkFrame(self)
+        button_frame.pack(fill="x", padx=20, pady=(5, 20))
+
         ctk.CTkButton(
-            button_frame,
-            text="저장",
-            command=self.save_settings,
-            width=100
+            button_frame, text="저장", command=self.save_settings, width=100
         ).pack(side="right", padx=10)
-        
+
         ctk.CTkButton(
-            button_frame,
-            text="취소",
-            command=self.destroy,
-            width=100
+            button_frame, text="취소", command=self.destroy, width=100
         ).pack(side="right")
     
+    def _toggle_log_path_state(self):
+        """로그 저장 스위치 상태에 따라 경로 입력 활성/비활성"""
+        state = "normal" if self.save_logs_var.get() else "disabled"
+        self.log_path_entry.configure(state=state)
+
     def browse_folder(self):
         """폴더 선택 다이얼로그"""
         folder = filedialog.askdirectory(title="모니터링 폴더 선택")
@@ -2015,38 +2038,47 @@ class SettingsWindow(ctk.CTkToplevel):
         if folder:
             self.pdf_output_entry.delete(0, "end")
             self.pdf_output_entry.insert(0, folder)
-    
+
+    def browse_hwpx_converter(self):
+        """HWPX 변환기 실행 파일 선택 다이얼로그"""
+        filepath = filedialog.askopenfilename(
+            title="HWPX 변환기 선택",
+            filetypes=[("실행 파일", "*.exe"), ("모든 파일", "*.*")]
+        )
+        if filepath:
+            self.hwpx_entry.delete(0, "end")
+            self.hwpx_entry.insert(0, filepath)
+
     def save_settings(self):
         """설정 저장"""
-        # 폴더 경로
+        # 폴더 경로 유효성 검사
         folder_path = self.folder_entry.get().strip()
         if folder_path and not os.path.exists(folder_path):
             messagebox.showerror("오류", "폴더를 찾을 수 없습니다.")
             return
-        
-        self.config_manager.set("monitor_folder", folder_path)
-        
-        # 확장자
-        selected_extensions = [ext for ext, var in self.extension_vars.items() if var.get()]
-        self.config_manager.set("extensions", selected_extensions)
-        
-        # PDF 출력 폴더
+
+        # PDF 출력 폴더 유효성 검사
         pdf_output_folder = self.pdf_output_entry.get().strip()
         if pdf_output_folder and not os.path.exists(pdf_output_folder):
             messagebox.showerror("오류", "PDF 출력 폴더를 찾을 수 없습니다.")
             return
-        
-        self.config_manager.set("pdf_output_folder", pdf_output_folder)
-        
-        # 로그 저장
-        self.config_manager.set("save_logs", self.save_logs_var.get())
-        self.config_manager.set("log_file_path", self.log_path_entry.get().strip())
-        
-        # 테마
+
+        # 모든 설정을 한 번에 저장 (파일 I/O 1회)
         theme = self.theme_var.get()
-        self.config_manager.set("theme", theme)
+        self.config_manager.batch_update({
+            "monitor_folder": folder_path,
+            "extensions": [ext for ext, var in self.extension_vars.items() if var.get()],
+            "pdf_output_folder": pdf_output_folder,
+            "hancom_pdf_printer": self.printer_entry.get().strip() or "Hancom PDF",
+            "hwpx_converter_path": self.hwpx_entry.get().strip(),
+            "save_logs": self.save_logs_var.get(),
+            "log_file_path": self.log_path_entry.get().strip(),
+            "theme": theme,
+            "auto_convert_pdf": self.auto_convert_var.get(),
+            "debug_mode": self.debug_mode_var.get(),
+        })
+
         ctk.set_appearance_mode(theme)
-        
         messagebox.showinfo("저장 완료", "설정이 저장되었습니다.")
         self.destroy()
 
