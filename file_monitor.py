@@ -82,6 +82,25 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# ── 앱 폰트 ──────────────────────────────────────────────────────────
+# Tk 초기화 후 MonitorApp.__init__ 에서 _init_app_font() 호출
+_APP_FONT_FAMILY: str = "Malgun Gothic"
+
+def _init_app_font() -> None:
+    """Pretendard 설치 여부 확인 후 전역 폰트 패밀리 결정."""
+    global _APP_FONT_FAMILY
+    try:
+        import tkinter.font as tkfont
+        if "Pretendard" in tkfont.families():
+            _APP_FONT_FAMILY = "Pretendard"
+            return
+    except Exception:
+        pass
+    _APP_FONT_FAMILY = "Malgun Gothic"
+
+def _font(size: int, weight: str = "normal") -> "ctk.CTkFont":
+    return ctk.CTkFont(family=_APP_FONT_FAMILY, size=size, weight=weight)
+
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
 # 날짜 헤더 관련 정규식 패턴 (참조 코드에서 가져옴)
@@ -1078,7 +1097,8 @@ class MonitorApp(DnDCTk):
     
     def __init__(self):
         super().__init__()
-        
+        _init_app_font()  # Tk 초기화 후 폰트 패밀리 결정
+
         # 설정
         self.config_manager = ConfigManager()
         ctk.set_appearance_mode(self.config_manager.get("theme", "dark"))
@@ -1122,13 +1142,13 @@ class MonitorApp(DnDCTk):
             status_info_frame,
             text="● 중지됨",
             text_color="gray",
-            font=ctk.CTkFont(size=16, weight="bold")
+            font=_font(16, "bold")
         )
         self.status_label.pack(side="left", padx=10, pady=5)
 
         # 처리 통계 인라인 표시
         self.stats_label = ctk.CTkLabel(
-            status_info_frame, text="", font=ctk.CTkFont(size=12)
+            status_info_frame, text="", font=_font(12)
         )
         self.stats_label.pack(side="left", padx=10, pady=5)
 
@@ -1136,7 +1156,7 @@ class MonitorApp(DnDCTk):
         self.folder_label = ctk.CTkLabel(
             status_info_frame,
             text="폴더: 미설정",
-            font=ctk.CTkFont(size=12),
+            font=_font(12),
             anchor="w",
             justify="left"
         )
@@ -1205,7 +1225,7 @@ class MonitorApp(DnDCTk):
         self.drop_label = ctk.CTkLabel(
             drop_content_frame,
             text="파일 선택 버튼을 사용하거나 파일을 드롭하세요",
-            font=ctk.CTkFont(size=12, weight="bold")
+            font=_font(12, "bold")
         )
         self.drop_label.pack(side="left", fill="x", expand=True)
         
@@ -1234,7 +1254,7 @@ class MonitorApp(DnDCTk):
         log_title = ctk.CTkLabel(
             log_header,
             text="📋 로그",
-            font=ctk.CTkFont(size=14, weight="bold")
+            font=_font(14, "bold")
         )
         log_title.pack(side="left", padx=10, pady=5)
         
@@ -1269,7 +1289,7 @@ class MonitorApp(DnDCTk):
         # 로그 텍스트 박스
         self.log_textbox = ctk.CTkTextbox(
             log_frame,
-            font=ctk.CTkFont(size=11),
+            font=_font(11),
             wrap="word"
         )
         self.log_textbox.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -1832,7 +1852,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(
             basic_scroll,
             text="모니터링 폴더",
-            font=ctk.CTkFont(size=14, weight="bold")
+            font=_font(14, "bold")
         ).pack(anchor="w", padx=10, pady=(10, 5))
 
         folder_input_frame = ctk.CTkFrame(basic_scroll)
@@ -1850,7 +1870,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(
             basic_scroll,
             text="처리할 확장자",
-            font=ctk.CTkFont(size=14, weight="bold")
+            font=_font(14, "bold")
         ).pack(anchor="w", padx=10, pady=(10, 5))
 
         self.extension_vars = {}
@@ -1865,7 +1885,7 @@ class SettingsWindow(ctk.CTkToplevel):
             ctk.CTkLabel(
                 basic_scroll,
                 text=group_label,
-                font=ctk.CTkFont(size=11),
+                font=_font(11),
                 text_color="gray"
             ).pack(anchor="w", padx=15, pady=(8, 2))
             for ext in exts:
@@ -1885,7 +1905,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(
             convert_scroll,
             text="자동 PDF 변환",
-            font=ctk.CTkFont(size=14, weight="bold")
+            font=_font(14, "bold")
         ).pack(anchor="w", padx=10, pady=(10, 5))
 
         self.auto_convert_var = ctk.BooleanVar(
@@ -1903,13 +1923,13 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(
             convert_scroll,
             text="PDF 출력 폴더",
-            font=ctk.CTkFont(size=14, weight="bold")
+            font=_font(14, "bold")
         ).pack(anchor="w", padx=10, pady=(10, 5))
 
         ctk.CTkLabel(
             convert_scroll,
             text="비워두면 원본 파일과 같은 폴더에 저장",
-            font=ctk.CTkFont(size=11),
+            font=_font(11),
             text_color="gray"
         ).pack(anchor="w", padx=15, pady=(0, 5))
 
@@ -1930,7 +1950,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(
             convert_scroll,
             text="Hancom PDF 프린터 이름",
-            font=ctk.CTkFont(size=14, weight="bold")
+            font=_font(14, "bold")
         ).pack(anchor="w", padx=10, pady=(10, 5))
 
         self.printer_entry = ctk.CTkEntry(convert_scroll)
@@ -1941,7 +1961,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(
             convert_scroll,
             text="HWPX 변환기 경로",
-            font=ctk.CTkFont(size=14, weight="bold")
+            font=_font(14, "bold")
         ).pack(anchor="w", padx=10, pady=(10, 5))
 
         hwpx_input_frame = ctk.CTkFrame(convert_scroll)
@@ -1965,7 +1985,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(
             other_scroll,
             text="로그 파일",
-            font=ctk.CTkFont(size=14, weight="bold")
+            font=_font(14, "bold")
         ).pack(anchor="w", padx=10, pady=(10, 5))
 
         self.save_logs_var = ctk.BooleanVar(value=config_manager.get("save_logs", False))
@@ -1992,7 +2012,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(
             other_scroll,
             text="테마",
-            font=ctk.CTkFont(size=14, weight="bold")
+            font=_font(14, "bold")
         ).pack(anchor="w", padx=10, pady=(10, 5))
 
         self.theme_var = ctk.StringVar(value=config_manager.get("theme", "dark"))
@@ -2007,7 +2027,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(
             other_scroll,
             text="개발자",
-            font=ctk.CTkFont(size=14, weight="bold")
+            font=_font(14, "bold")
         ).pack(anchor="w", padx=10, pady=(10, 5))
 
         self.debug_mode_var = ctk.BooleanVar(
