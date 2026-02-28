@@ -90,6 +90,7 @@ LONG_DATE_PREFIX_PATTERN = re.compile(r'^(\d{8})([\s_\-]*)(.*)')
 PERIOD_DATE_PREFIX_PATTERN = re.compile(r'^(\d{4})([.\-_])(\d{2})\2(\d{2})([\s_\-]*)(.*)')
 SHORT_PERIOD_DATE_PREFIX_PATTERN = re.compile(r'^(\d{2})([.\-_])(\d{2})\2(\d{2})([\s_\-]*)(.*)')
 SIX_DIGIT_PREFIX_PATTERN = re.compile(r'^(\d{6})([\s_\-]+)(.*)')
+EMPHASIS_PREFIX_PATTERN = re.compile(r'^([★☆]+)\s*(.*)', re.DOTALL)
 
 ALLOWED_EXTENSIONS = {'.pdf', '.hwp', '.hwpx', '.hwpm', '.doc', '.docx',
                       '.ppt', '.pptx', '.xls', '.xlsx', '.txt', '.zip'}
@@ -289,33 +290,44 @@ class DateHeaderProcessor:
         return f"{date} {filename}"
     
     @staticmethod
+    def _strip_emphasis_prefix(filename: str) -> Tuple[bool, str]:
+        """파일명 앞의 강조 문자(★, ☆)를 제거"""
+        match = EMPHASIS_PREFIX_PATTERN.match(filename)
+        if match:
+            return True, match.group(2)
+        return False, filename
+
+    @staticmethod
     def rename_file_with_date(filepath: str) -> Tuple[Optional[str], Optional[str]]:
         """파일에 날짜 접두사 추가 (참조 코드 기반)"""
-        filename = os.path.basename(filepath)
-        
+        original_filename = os.path.basename(filepath)
+
         if not os.path.isfile(filepath):
             return None, "파일이 아닙니다"
-        
-        ext = os.path.splitext(filename)[1].lower()
+
+        ext = os.path.splitext(original_filename)[1].lower()
         if ext not in ALLOWED_EXTENSIONS:
             return None, f"지원하지 않는 확장자: {ext}"
-        
+
+        # 강조 문자(★, ☆) 제거
+        had_emphasis, filename = DateHeaderProcessor._strip_emphasis_prefix(original_filename)
+
         # 이미 날짜 접두사가 있는 경우 통일된 형식으로 변환
         if EXISTING_PREFIX_PATTERN.match(filename):
             new_filename = DateHeaderProcessor.shorten_date_prefix(filename)
-            if new_filename and new_filename != filename:
+            if new_filename and new_filename != original_filename:
                 new_filepath = os.path.join(os.path.dirname(filepath), new_filename)
                 return DateHeaderProcessor._rename_with_retry(filepath, new_filepath)
             return None, "이미 날짜 접두사가 있습니다"
-        
+
         # 날짜 접두사 추가
         new_filename = DateHeaderProcessor.shorten_date_prefix(filename)
         if not new_filename:
             new_filename = DateHeaderProcessor.add_date_prefix(filepath, filename)
-        
-        if new_filename == filename:
+
+        if new_filename == original_filename:
             return None, "변경사항이 없습니다"
-        
+
         new_filepath = os.path.join(os.path.dirname(filepath), new_filename)
         return DateHeaderProcessor._rename_with_retry(filepath, new_filepath)
 
